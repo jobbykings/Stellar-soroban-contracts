@@ -40,6 +40,10 @@ mod propchain_insurance {
         CooldownPeriodActive,
         PropertyNotInsurable,
         DuplicateClaim,
+        // Evidence validation errors
+        EvidenceNonceEmpty,
+        EvidenceInvalidUriScheme,
+        EvidenceInvalidHashLength,
         ZeroAmount,
         InsufficientStake,
         InsufficientPoolLiquidity,
@@ -128,6 +132,22 @@ mod propchain_insurance {
         VeryHigh,
     }
 
+    /// Structured evidence attached to a claim submission.
+    #[derive(
+        Debug, Clone, PartialEq, scale::Encode, scale::Decode, ink::storage::traits::StorageLayout,
+    )]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub struct EvidenceMetadata {
+        /// Non-empty nonce / type identifier (e.g. "photo", "report", "sensor")
+        pub evidence_type: String,
+        /// URI pointing to the evidence artifact (must start with "ipfs://" or "https://")
+        pub reference_uri: String,
+        /// SHA-256 content hash – exactly 32 bytes
+        pub content_hash: Vec<u8>,
+        /// Optional human-readable description
+        pub description: Option<String>,
+    }
+
     #[derive(
         Debug, Clone, PartialEq, scale::Encode, scale::Decode, ink::storage::traits::StorageLayout,
     )]
@@ -160,7 +180,7 @@ mod propchain_insurance {
         pub claimant: AccountId,
         pub claim_amount: u128,
         pub description: String,
-        pub evidence_url: String,
+        pub evidence: EvidenceMetadata,
         pub oracle_report_url: String,
         pub status: ClaimStatus,
         pub submitted_at: u64,
@@ -1126,8 +1146,20 @@ mod propchain_insurance {
             policy_id: u64,
             claim_amount: u128,
             description: String,
-            evidence_url: String,
+            evidence: EvidenceMetadata,
         ) -> Result<u64, InsuranceError> {
+            // --- Evidence validation (evict invalid submissions immediately) ---
+            if evidence.evidence_type.is_empty() {
+                return Err(InsuranceError::EvidenceNonceEmpty);
+            }
+            let uri = &evidence.reference_uri;
+            if !uri.starts_with("ipfs://") && !uri.starts_with("https://") {
+                return Err(InsuranceError::EvidenceInvalidUriScheme);
+            }
+            if evidence.content_hash.len() != 32 {
+                return Err(InsuranceError::EvidenceInvalidHashLength);
+            }
+
             let caller = self.env().caller();
             let now = self.env().block_timestamp();
 
@@ -1167,7 +1199,7 @@ mod propchain_insurance {
                 claimant: caller,
                 claim_amount,
                 description,
-                evidence_url,
+                evidence,
                 oracle_report_url: String::new(),
                 status: ClaimStatus::Pending,
                 submitted_at: now,
@@ -1841,8 +1873,18 @@ mod insurance_tests {
     use ink::env::{test, DefaultEnvironment};
 
     use crate::propchain_insurance::{
-        ClaimStatus, CoverageType, InsuranceError, PolicyStatus, PropertyInsurance,
+        ClaimStatus, CoverageType, EvidenceMetadata, InsuranceError, PolicyStatus,
+        PropertyInsurance,
     };
+
+    fn valid_evidence() -> EvidenceMetadata {
+        EvidenceMetadata {
+            evidence_type: "photo".into(),
+            reference_uri: "ipfs://QmEvidence123".into(),
+            content_hash: vec![0u8; 32],
+            description: Some("Fire damage photos".into()),
+        }
+    }
 
     fn setup() -> PropertyInsurance {
         let accounts = test::default_accounts::<DefaultEnvironment>();
@@ -2173,7 +2215,7 @@ mod insurance_tests {
             policy_id,
             10_000_000_000u128,
             "Fire damage to property".into(),
-            "ipfs://evidence123".into(),
+            valid_evidence(),
         );
         assert!(result.is_ok());
         let claim_id = result.unwrap();
@@ -2212,7 +2254,7 @@ mod insurance_tests {
             policy_id,
             coverage * 2,
             "Huge fire".into(),
-            "ipfs://evidence".into(),
+            valid_evidence(),
         );
         assert_eq!(result, Err(InsuranceError::ClaimExceedsCoverage));
     }
@@ -2245,7 +2287,7 @@ mod insurance_tests {
             policy_id,
             1_000u128,
             "Fraud attempt".into(),
-            "ipfs://x".into(),
+            valid_evidence(),
         );
         assert_eq!(result, Err(InsuranceError::Unauthorized));
     }
@@ -2283,7 +2325,7 @@ mod insurance_tests {
                 policy_id,
                 10_000_000_000u128,
                 "Fire damage".into(),
-                "ipfs://evidence".into(),
+                valid_evidence(),
             )
             .unwrap();
         test::set_caller::<DefaultEnvironment>(accounts.alice);
