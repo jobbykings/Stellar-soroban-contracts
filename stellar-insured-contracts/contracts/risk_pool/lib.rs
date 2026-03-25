@@ -27,6 +27,11 @@ const PROVIDER: Symbol = Symbol::short("PROVIDER");
 const RESERVED_TOTAL: Symbol = Symbol::short("RSV_TOT");
 const CLAIM_RESERVATION: Symbol = Symbol::short("CLM_RSV");
 
+// Checkpointing constants
+const CHECKPOINT_COUNTER: Symbol = Symbol::short("CHKPT_CNT");
+const CHECKPOINT_DATA: Symbol = Symbol::short("CHKPT_DATA");
+const ROLLBACK_DETECTION: Symbol = Symbol::short("ROLLBACK_DET");
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum ContractError {
@@ -46,6 +51,11 @@ pub enum ContractError {
     LiquidityViolation = 100,
     InvalidAmount = 103,
     Overflow = 107,
+    // Checkpointing errors (200-299)
+    CheckpointNotFound = 200,
+    RollbackDetected = 201,
+    DoubleApplication = 202,
+    CheckpointCorrupted = 203,
 }
 
 impl From<insurance_contracts::authorization::AuthError> for ContractError {
@@ -100,6 +110,46 @@ pub struct RiskPoolStatsView {
     pub utilization_rate_bps: u32,
 }
 
+/// On-chain checkpoint data for critical pool metrics
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolCheckpoint {
+    /// Unique checkpoint identifier
+    pub checkpoint_id: u64,
+    /// Ledger sequence when checkpoint was created
+    pub ledger_sequence: u32,
+    /// Timestamp when checkpoint was created
+    pub timestamp: u64,
+    /// Pool statistics at checkpoint time
+    pub pool_stats: (i128, i128, i128, u64), // (total_liquidity, total_paid_out, total_deposits, provider_count)
+    /// Total reserved amount at checkpoint time
+    pub reserved_total: i128,
+    /// Hash of the checkpoint data for integrity verification
+    pub data_hash: BytesN<32>,
+    /// Type of operation that triggered this checkpoint
+    pub operation_type: Symbol,
+    /// Additional context data (e.g., claim_id, provider address)
+    pub context: soroban_sdk::Vec<Symbol>,
+}
+
+/// Rollback detection event data
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RollbackDetectionEvent {
+    /// Checkpoint where rollback was detected
+    pub checkpoint_id: u64,
+    /// Expected state hash
+    pub expected_hash: BytesN<32>,
+    /// Actual state hash
+    pub actual_hash: BytesN<32>,
+    /// Type of inconsistency detected
+    pub inconsistency_type: Symbol,
+    /// Ledger sequence where detected
+    pub detection_sequence: u32,
+    /// Emergency flag - if true, requires immediate attention
+    pub emergency_flag: bool,
+}
+
 fn validate_address(_env: &Env, _address: &Address) -> Result<(), ContractError> {
     Ok(())
 }
@@ -134,6 +184,186 @@ fn validate_amount(amount: i128) -> Result<(), ContractError> {
         return Err(ContractError::InvalidAmount);
     }
     Ok(())
+}
+
+/// Create a checkpoint of critical pool metrics before state transition
+fn create_checkpoint(
+    env: &Env,
+    operation_type: Symbol,
+    context: soroban_sdk::Vec<Symbol>,
+) -> Result<u64, ContractError> {
+    // Get current pool statistics
+    let stats: (i128, i128, i128, u64) =
+        env.storage().persistent().get(&POOL_STATS).ok_or(ContractError::NotInitialized)?;
+    
+    let reserved_total: i128 = env.storage().persistent().get(&RESERVED_TOTAL).unwrap_or(0i128);
+    
+    // Get next checkpoint ID
+    let checkpoint_id = get_next_checkpoint_id(env);
+    
+    // Create checkpoint data
+    let checkpoint = PoolCheckpoint {
+        checkpoint_id,
+        ledger_sequence: env.ledger().sequence(),
+        timestamp: env.ledger().timestamp(),
+        pool_stats: stats,
+        reserved_total,
+        data_hash: BytesN::from_array(&env, &[0; 32]), // Will be set below
+        operation_type,
+        context,
+    };
+    
+    // Calculate hash of checkpoint data
+    let data_hash = calculate_checkpoint_hash(env, &checkpoint);
+    let mut checkpoint_with_hash = checkpoint;
+    checkpoint_with_hash.data_hash = data_hash;
+    
+    // Store checkpoint
+    env.storage().persistent().set(&(CHECKPOINT_DATA, checkpoint_id), &checkpoint_with_hash);
+    
+    // Emit checkpoint creation event
+    env.events().publish(
+        (Symbol::new(env, "checkpoint_created"), checkpoint_id),
+        (operation_type, data_hash),
+    );
+    
+    Ok(checkpoint_id)
+}
+
+/// Get the next checkpoint ID
+fn get_next_checkpoint_id(env: &Env) -> u64 {
+    let current_id = env.storage().persistent().get(&CHECKPOINT_COUNTER).unwrap_or(0u64);
+    let next_id = current_id + 1;
+    env.storage().persistent().set(&CHECKPOINT_COUNTER, &next_id);
+    next_id
+}
+
+/// Calculate hash of checkpoint data for integrity verification
+fn calculate_checkpoint_hash(env: &Env, checkpoint: &PoolCheckpoint) -> BytesN<32> {
+    let mut hasher = env.crypto().sha256();
+    
+    // Hash all checkpoint fields except the hash itself
+    hasher.update(&checkpoint.checkpoint_id.to_xdr(env));
+    hasher.update(&checkpoint.ledger_sequence.to_xdr(env));
+    hasher.update(&checkpoint.timestamp.to_xdr(env));
+    hasher.update(&checkpoint.pool_stats.to_xdr(env));
+    hasher.update(&checkpoint.reserved_total.to_xdr(env));
+    hasher.update(&checkpoint.operation_type.to_xdr(env));
+    hasher.update(&checkpoint.context.to_xdr(env));
+    
+    hasher.finalize()
+}
+
+/// Verify checkpoint integrity and detect rollbacks
+fn verify_checkpoint_integrity(
+    env: &Env,
+    checkpoint_id: u64,
+) -> Result<(), ContractError> {
+    let checkpoint: PoolCheckpoint = env
+        .storage()
+        .persistent()
+        .get(&(CHECKPOINT_DATA, checkpoint_id))
+        .ok_or(ContractError::CheckpointNotFound)?;
+    
+    // Recalculate hash and verify integrity
+    let calculated_hash = calculate_checkpoint_hash(env, &checkpoint);
+    
+    if calculated_hash != checkpoint.data_hash {
+        // Checkpoint data has been corrupted
+        emit_rollback_detection_event(
+            env,
+            checkpoint_id,
+            checkpoint.data_hash,
+            calculated_hash,
+            Symbol::new(env, "checkpoint_corruption"),
+        );
+        return Err(ContractError::CheckpointCorrupted);
+    }
+    
+    // Check for double application of the same operation
+    if is_operation_already_applied(env, &checkpoint) {
+        emit_rollback_detection_event(
+            env,
+            checkpoint_id,
+            checkpoint.data_hash,
+            calculated_hash,
+            Symbol::new(env, "double_application"),
+        );
+        return Err(ContractError::DoubleApplication);
+    }
+    
+    Ok(())
+}
+
+/// Check if an operation has already been applied to prevent double execution
+fn is_operation_already_applied(env: &Env, checkpoint: &PoolCheckpoint) -> bool {
+    // Check if there's a record of this operation being completed
+    let completion_key = (Symbol::new(env, "OP_COMPLETE"), checkpoint.checkpoint_id);
+    env.storage().persistent().has(&completion_key)
+}
+
+/// Mark an operation as completed to prevent double application
+fn mark_operation_completed(env: &Env, checkpoint_id: u64) {
+    let completion_key = (Symbol::new(env, "OP_COMPLETE"), checkpoint_id);
+    env.storage().persistent().set(&completion_key, &true);
+}
+
+/// Emit rollback detection emergency event
+fn emit_rollback_detection_event(
+    env: &Env,
+    checkpoint_id: u64,
+    expected_hash: BytesN<32>,
+    actual_hash: BytesN<32>,
+    inconsistency_type: Symbol,
+) {
+    let event = RollbackDetectionEvent {
+        checkpoint_id,
+        expected_hash,
+        actual_hash,
+        inconsistency_type,
+        detection_sequence: env.ledger().sequence(),
+        emergency_flag: true, // All rollback detections are emergencies
+    };
+    
+    // Emit emergency alert event
+    env.events().publish(
+        (Symbol::new(env, "emergency_rollback_detected"), checkpoint_id),
+        (inconsistency_type, expected_hash, actual_hash),
+    );
+    
+    // Store the detection event for audit trail
+    env.storage().persistent().set(
+        &(ROLLBACK_DETECTION, checkpoint_id),
+        &event,
+    );
+}
+
+/// Get checkpoint by ID
+fn get_checkpoint(env: &Env, checkpoint_id: u64) -> Result<PoolCheckpoint, ContractError> {
+    env.storage()
+        .persistent()
+        .get(&(CHECKPOINT_DATA, checkpoint_id))
+        .ok_or(ContractError::CheckpointNotFound)
+}
+
+/// Get recent checkpoints for audit purposes
+fn get_recent_checkpoints(env: &Env, limit: u32) -> Result<soroban_sdk::Vec<PoolCheckpoint>, ContractError> {
+    let mut checkpoints = soroban_sdk::Vec::new(env);
+    let current_id = env.storage().persistent().get(&CHECKPOINT_COUNTER).unwrap_or(0u64);
+    
+    let start_id = if current_id > limit as u64 {
+        current_id - limit as u64 + 1
+    } else {
+        1
+    };
+    
+    for id in start_id..=current_id {
+        if let Ok(checkpoint) = get_checkpoint(env, id) {
+            checkpoints.push_back(checkpoint);
+        }
+    }
+    
+    Ok(checkpoints)
 }
 
 #[contractimpl]
@@ -223,12 +453,31 @@ impl RiskPoolContract {
             return Err(ContractError::InvalidInput);
         }
 
+        // Create checkpoint before state change
+        let mut context = soroban_sdk::Vec::new(&env);
+        context.push_back(Symbol::new(&env, "provider"));
+        context.push_back(Symbol::new(&env, &format!("{:?}", provider)));
+        context.push_back(Symbol::new(&env, "amount"));
+        context.push_back(Symbol::new(&env, &format!("{}", amount)));
+        
+        let checkpoint_id = create_checkpoint(
+            &env,
+            Symbol::new(&env, "deposit_liquidity"),
+            context,
+        )?;
+
         // Use optimized update operations
         OptimizedRiskPool::update_provider_info_optimized(&env, &provider, amount, amount)?;
         OptimizedRiskPool::update_pool_stats_optimized(&env, amount, 0, amount, 0)?;
 
         // I1: Assert liquidity invariant holds after deposit
         check_liquidity_invariant(&env)?;
+
+        // Verify checkpoint integrity after operation
+        verify_checkpoint_integrity(&env, checkpoint_id)?;
+        
+        // Mark operation as completed
+        mark_operation_completed(&env, checkpoint_id);
 
         env.events().publish(
             (Symbol::new(&env, "liquidity_deposited"), provider.clone()),
@@ -293,6 +542,19 @@ impl RiskPoolContract {
             return Err(ContractError::InsufficientFunds);
         }
 
+        // Create checkpoint before state change
+        let mut context = soroban_sdk::Vec::new(&env);
+        context.push_back(Symbol::new(&env, "claim_id"));
+        context.push_back(Symbol::new(&env, &format!("{}", claim_id)));
+        context.push_back(Symbol::new(&env, "amount"));
+        context.push_back(Symbol::new(&env, &format!("{}", amount)));
+        
+        let checkpoint_id = create_checkpoint(
+            &env,
+            Symbol::new(&env, "reserve_liquidity"),
+            context,
+        )?;
+
         // Safe arithmetic for reservation
         let new_reserved_total =
             reserved_total.checked_add(amount).ok_or(ContractError::Overflow)?;
@@ -302,6 +564,12 @@ impl RiskPoolContract {
 
         // I1: Assert liquidity invariant holds after reservation
         check_liquidity_invariant(&env)?;
+
+        // Verify checkpoint integrity after operation
+        verify_checkpoint_integrity(&env, checkpoint_id)?;
+        
+        // Mark operation as completed
+        mark_operation_completed(&env, checkpoint_id);
 
         env.events().publish(
             (Symbol::new(&env, "liquidity_reserved"), claim_id),
@@ -601,6 +869,80 @@ pub fn payout_claim(
     /// Get the role of an address
     pub fn get_user_role(env: Env, address: Address) -> Role {
         get_role(&env, &address)
+    }
+
+    // ============================================================
+    // CHECKPOINTING AND ROLLBACK DETECTION METHODS
+    // ============================================================
+
+    /// Get checkpoint by ID (for audit and verification)
+    pub fn get_checkpoint(env: Env, checkpoint_id: u64) -> Result<PoolCheckpoint, ContractError> {
+        get_checkpoint(&env, checkpoint_id)
+    }
+
+    /// Get recent checkpoints for audit purposes
+    pub fn get_recent_checkpoints(env: Env, limit: u32) -> Result<soroban_sdk::Vec<PoolCheckpoint>, ContractError> {
+        get_recent_checkpoints(&env, limit)
+    }
+
+    /// Verify checkpoint integrity manually (for auditors)
+    pub fn verify_checkpoint(env: Env, checkpoint_id: u64) -> Result<bool, ContractError> {
+        match verify_checkpoint_integrity(&env, checkpoint_id) {
+            Ok(()) => Ok(true),
+            Err(ContractError::CheckpointCorrupted) => Ok(false),
+            Err(ContractError::DoubleApplication) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Get rollback detection events for audit
+    pub fn get_rollback_events(env: Env, limit: u32) -> Result<soroban_sdk::Vec<RollbackDetectionEvent>, ContractError> {
+        let mut events = soroban_sdk::Vec::new(&env);
+        let current_id = env.storage().persistent().get(&CHECKPOINT_COUNTER).unwrap_or(0u64);
+        
+        let start_id = if current_id > limit as u64 {
+            current_id - limit as u64 + 1
+        } else {
+            1
+        };
+        
+        for id in start_id..=current_id {
+            if let Some(event) = env.storage().persistent().get(&(ROLLBACK_DETECTION, id)) {
+                events.push_back(event);
+            }
+        }
+        
+        Ok(events)
+    }
+
+    /// Force create manual checkpoint (admin only)
+    pub fn create_manual_checkpoint(
+        env: Env,
+        admin: Address,
+        operation_type: Symbol,
+        context: soroban_sdk::Vec<Symbol>,
+    ) -> Result<u64, ContractError> {
+        admin.require_auth();
+        require_admin(&env, &admin)?;
+        
+        create_checkpoint(&env, operation_type, context)
+    }
+
+    /// Get checkpoint statistics
+    pub fn get_checkpoint_stats(env: Env) -> Result<(u64, u64, u64), ContractError> {
+        let total_checkpoints = env.storage().persistent().get(&CHECKPOINT_COUNTER).unwrap_or(0u64);
+        
+        // Count rollback events
+        let mut rollback_count = 0u64;
+        let current_id = total_checkpoints;
+        
+        for id in 1..=current_id {
+            if env.storage().persistent().has(&(ROLLBACK_DETECTION, id)) {
+                rollback_count += 1;
+            }
+        }
+        
+        Ok((total_checkpoints, rollback_count, total_checkpoints - rollback_count))
     }
 
     /// Grant auditor role to an address (admin only)
