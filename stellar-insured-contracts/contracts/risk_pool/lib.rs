@@ -10,9 +10,6 @@ use insurance_contracts::authorization::{
 // Import invariant checks and error types
 use insurance_invariants::{InvariantError, ProtocolInvariants};
 
-// Import gas optimization utilities
-use insurance_contracts::gas_optimization::{GasOptimizer, PerformanceMonitor};
-
 #[contract]
 pub struct RiskPoolContract;
 
@@ -407,17 +404,6 @@ impl RiskPoolContract {
     }
 
     pub fn deposit_liquidity(
-        env: Env,
-        provider: Address,
-        amount: i128,
-    ) -> Result<(), ContractError> {
-        // Use performance monitoring
-        PerformanceMonitor::track_operation(&env, "deposit_liquidity", || {
-            Self::deposit_liquidity_impl(env.clone(), provider.clone(), amount)
-        })
-    }
-
-    fn deposit_liquidity_impl(
         env: Env,
         provider: Address,
         amount: i128,
