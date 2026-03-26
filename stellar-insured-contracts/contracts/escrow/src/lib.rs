@@ -20,6 +20,7 @@ mod propchain_escrow {
         Unauthorized,
         InvalidStatus,
         InsufficientFunds,
+        ArithmeticOverflow,
         ConditionsNotMet,
         SignatureThresholdNotMet,
         AlreadySigned,
@@ -369,7 +370,10 @@ mod propchain_escrow {
             }
 
             // Update deposited amount
-            escrow.deposited_amount += transferred;
+            escrow.deposited_amount = escrow
+                .deposited_amount
+                .checked_add(transferred)
+                .ok_or(Error::ArithmeticOverflow)?;
 
             // Check if fully funded
             if escrow.deposited_amount >= escrow.amount {
@@ -432,19 +436,21 @@ mod propchain_escrow {
                 return Err(Error::SignatureThresholdNotMet);
             }
 
-            // Transfer funds to seller
+            let mut updated_escrow = escrow.clone();
+            updated_escrow.status = EscrowStatus::Released;
+            updated_escrow.deposited_amount = 0;
+            self.escrows.insert(&escrow_id, &updated_escrow);
+
+            // Finalize state before the external transfer to avoid re-entrancy-style double
+            // execution. Restore the original escrow record if the transfer fails.
             if self
                 .env()
                 .transfer(escrow.seller, escrow.deposited_amount)
                 .is_err()
             {
+                self.escrows.insert(&escrow_id, &escrow);
                 return Err(Error::InsufficientFunds);
             }
-
-            // Update status
-            let mut updated_escrow = escrow.clone();
-            updated_escrow.status = EscrowStatus::Released;
-            self.escrows.insert(&escrow_id, &updated_escrow);
 
             // Add audit entry
             self.add_audit_entry(
@@ -479,19 +485,21 @@ mod propchain_escrow {
                 return Err(Error::SignatureThresholdNotMet);
             }
 
-            // Transfer funds back to buyer
+            let mut updated_escrow = escrow.clone();
+            updated_escrow.status = EscrowStatus::Refunded;
+            updated_escrow.deposited_amount = 0;
+            self.escrows.insert(&escrow_id, &updated_escrow);
+
+            // Finalize state before the external transfer to avoid re-entrancy-style double
+            // execution. Restore the original escrow record if the transfer fails.
             if self
                 .env()
                 .transfer(escrow.buyer, escrow.deposited_amount)
                 .is_err()
             {
+                self.escrows.insert(&escrow_id, &escrow);
                 return Err(Error::InsufficientFunds);
             }
-
-            // Update status
-            let mut updated_escrow = escrow.clone();
-            updated_escrow.status = EscrowStatus::Refunded;
-            self.escrows.insert(&escrow_id, &updated_escrow);
 
             // Add audit entry
             self.add_audit_entry(
@@ -623,7 +631,7 @@ mod propchain_escrow {
             }
 
             let mut counter = self.condition_counters.get(&escrow_id).unwrap_or(0);
-            counter += 1;
+            counter = counter.checked_add(1).ok_or(Error::ArithmeticOverflow)?;
 
             let condition = Condition {
                 id: counter,
@@ -737,8 +745,12 @@ mod propchain_escrow {
             // Update signature count
             let count_key = (escrow_id, approval_type.clone());
             let current_count = self.signature_counts.get(&count_key).unwrap_or(0);
-            self.signature_counts
-                .insert(&count_key, &(current_count + 1));
+            self.signature_counts.insert(
+                &count_key,
+                &current_count
+                    .checked_add(1)
+                    .ok_or(Error::ArithmeticOverflow)?,
+            );
 
             // Add audit entry
             self.add_audit_entry(
@@ -866,23 +878,25 @@ mod propchain_escrow {
                 escrow.buyer
             };
 
-            // Transfer funds
-            if self
-                .env()
-                .transfer(recipient, escrow.deposited_amount)
-                .is_err()
-            {
-                return Err(Error::InsufficientFunds);
-            }
-
-            // Update status
             let mut updated_escrow = escrow.clone();
             updated_escrow.status = if release_to_seller {
                 EscrowStatus::Released
             } else {
                 EscrowStatus::Refunded
             };
+            updated_escrow.deposited_amount = 0;
             self.escrows.insert(&escrow_id, &updated_escrow);
+
+            // Finalize state before the external transfer to avoid re-entrancy-style double
+            // execution. Restore the original escrow record if the transfer fails.
+            if self
+                .env()
+                .transfer(recipient, escrow.deposited_amount)
+                .is_err()
+            {
+                self.escrows.insert(&escrow_id, &escrow);
+                return Err(Error::InsufficientFunds);
+            }
 
             // Add audit entry
             self.add_audit_entry(

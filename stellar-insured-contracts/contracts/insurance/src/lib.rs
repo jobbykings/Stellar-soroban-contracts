@@ -641,22 +641,21 @@ mod propchain_insurance {
 
             let now = self.env().block_timestamp();
             let key = (pool_id, caller);
-            let mut provider = self.liquidity_providers.get(&key).unwrap_or(PoolLiquidityProvider {
-                provider: caller,
-                pool_id,
-                provider_stake: 0,
-                reward_debt: 0,
-                deposited_at: now,
-            });
+            let mut provider =
+                self.liquidity_providers
+                    .get(&key)
+                    .unwrap_or(PoolLiquidityProvider {
+                        provider: caller,
+                        pool_id,
+                        provider_stake: 0,
+                        reward_debt: 0,
+                        deposited_at: now,
+                    });
 
             let acc = pool.accumulated_reward_per_share;
             provider.reward_debt = provider
                 .reward_debt
-                .saturating_add(
-                    amount
-                        .saturating_mul(acc)
-                        .saturating_div(REWARD_PRECISION),
-                );
+                .saturating_add(amount.saturating_mul(acc).saturating_div(REWARD_PRECISION));
             provider.provider_stake = provider.provider_stake.saturating_add(amount);
 
             pool.total_provider_stake = pool.total_provider_stake.saturating_add(amount);
@@ -1681,7 +1680,8 @@ mod propchain_insurance {
             let inc = reward_amount
                 .saturating_mul(REWARD_PRECISION)
                 .saturating_div(pool.total_provider_stake);
-            pool.accumulated_reward_per_share = pool.accumulated_reward_per_share.saturating_add(inc);
+            pool.accumulated_reward_per_share =
+                pool.accumulated_reward_per_share.saturating_add(inc);
         }
 
         fn ensure_admin(&self) -> Result<(), InsuranceError> {
@@ -2043,6 +2043,20 @@ mod insurance_tests {
             .calculate_premium(1, 1_000_000_000_000u128, CoverageType::Comprehensive)
             .unwrap();
         assert!(comp_calc.annual_premium > fire_calc.annual_premium);
+    }
+
+    #[ink::test]
+    fn test_security_large_coverage_premium_calculation_does_not_overflow() {
+        let mut contract = setup();
+        add_risk_assessment(&mut contract, 1);
+
+        let result = contract.calculate_premium(1, u128::MAX, CoverageType::Comprehensive);
+        assert!(result.is_ok());
+
+        let calc = result.expect("Premium calculation should handle large values safely");
+        assert!(calc.annual_premium > 0);
+        assert!(calc.monthly_premium <= calc.annual_premium);
+        assert!(calc.deductible <= u128::MAX);
     }
 
     // =========================================================================
@@ -2449,6 +2463,72 @@ mod insurance_tests {
         assert!(result.is_ok());
     }
 
+    #[ink::test]
+    fn test_security_claim_cooldown_boundary_blocks_early_retry_and_allows_exact_boundary() {
+        let mut contract = setup();
+        let accounts = test::default_accounts::<DefaultEnvironment>();
+        let pool_id = create_pool(&mut contract);
+        test::set_value_transferred::<DefaultEnvironment>(10_000_000_000_000u128);
+        contract.provide_pool_liquidity(pool_id).unwrap();
+        add_risk_assessment(&mut contract, 1);
+
+        let calc = contract
+            .calculate_premium(1, 500_000_000_000u128, CoverageType::Fire)
+            .unwrap();
+
+        test::set_caller::<DefaultEnvironment>(accounts.bob);
+        test::set_value_transferred::<DefaultEnvironment>(calc.annual_premium * 2);
+        let policy_id = contract
+            .create_policy(
+                1,
+                CoverageType::Fire,
+                500_000_000_000u128,
+                pool_id,
+                86_400 * 365,
+                "ipfs://cooldown".into(),
+            )
+            .unwrap();
+
+        let first_claim_id = contract
+            .submit_claim(
+                policy_id,
+                100_000u128,
+                "Initial loss".into(),
+                valid_evidence(),
+            )
+            .unwrap();
+
+        test::set_caller::<DefaultEnvironment>(accounts.alice);
+        contract
+            .process_claim(first_claim_id, true, "ipfs://report".into(), String::new())
+            .unwrap();
+
+        let cooldown_anchor = test::get_block_timestamp::<DefaultEnvironment>();
+
+        test::set_caller::<DefaultEnvironment>(accounts.bob);
+        test::set_block_timestamp::<DefaultEnvironment>(
+            cooldown_anchor + contract.claim_cooldown_period() - 1,
+        );
+        let early_retry = contract.submit_claim(
+            policy_id,
+            100_000u128,
+            "Retry too early".into(),
+            valid_evidence(),
+        );
+        assert_eq!(early_retry, Err(InsuranceError::CooldownPeriodActive));
+
+        test::set_block_timestamp::<DefaultEnvironment>(
+            cooldown_anchor + contract.claim_cooldown_period(),
+        );
+        let boundary_retry = contract.submit_claim(
+            policy_id,
+            100_000u128,
+            "Retry at boundary".into(),
+            valid_evidence(),
+        );
+        assert!(boundary_retry.is_ok());
+    }
+
     // =========================================================================
     // REINSURANCE TESTS
     // =========================================================================
@@ -2620,6 +2700,15 @@ mod insurance_tests {
     fn test_set_claim_cooldown_works() {
         let mut contract = setup();
         assert!(contract.set_claim_cooldown(86_400).is_ok());
+    }
+
+    #[ink::test]
+    fn test_security_set_claim_cooldown_requires_admin() {
+        let mut contract = setup();
+        let accounts = test::default_accounts::<DefaultEnvironment>();
+        test::set_caller::<DefaultEnvironment>(accounts.bob);
+        let result = contract.set_claim_cooldown(86_400);
+        assert_eq!(result, Err(InsuranceError::Unauthorized));
     }
 
     #[ink::test]
