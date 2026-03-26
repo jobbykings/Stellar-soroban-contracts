@@ -1,6 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, Symbol};
-use soroban_sdk::{contract, contractimpl, contracterror, contracttype, Address, Env, Symbol};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, BytesN};
 
 // Import authorization from the common library
 use insurance_contracts::authorization::{
