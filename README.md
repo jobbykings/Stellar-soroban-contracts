@@ -194,6 +194,10 @@ Deploy to Stellar network using Soroban CLI
 
 Initialize each contract with proper parameters
 
+Local sandbox orchestration:
+
+`stellar-insured-contracts/scripts/orchestrate-soroban.sh` deploys the Soroban stack in dependency order, initializes governance defaults, and primes the pool for local integration runs. See `stellar-insured-contracts/docs/soroban-orchestrator.md` for usage and override examples.
+
 Security Considerations
 Authorization: All sensitive operations require authentication
 State Validation: Comprehensive checks on contract state transitions
