@@ -9,6 +9,7 @@ use insurance_contracts::authorization::{
 use insurance_contracts::rate_limit::{self, RateLimitConfig};
 use insurance_contracts::gas_optimization::{GasOptimizer, PerformanceMonitor};
 use insurance_contracts::emergency_pause::EmergencyPause;
+use insurance_contracts::unified_errors::{UnifiedError, to_unified_error};
 
 // Import invariant checks and error types
 use insurance_invariants::{InvariantError, ProtocolInvariants};
@@ -416,6 +417,12 @@ impl From<insurance_contracts::rate_limit::RateLimitError> for ContractError {
                 ContractError::InvalidRateLimitConfig
             }
         }
+    }
+}
+
+impl From<ContractError> for UnifiedError {
+    fn from(err: ContractError) -> Self {
+        to_unified_error!(err)
     }
 }
 

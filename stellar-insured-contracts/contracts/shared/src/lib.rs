@@ -37,9 +37,11 @@ pub mod versioning;
 pub mod upgradeable;
 pub mod gas_optimization;
 pub mod emergency_pause;
+pub mod unified_errors;
 
 // Re-export commonly used types
 pub use errors::ContractError;
+pub use unified_errors::{UnifiedError, error_ranges};
 pub use types::{
     PolicyStatus, ClaimStatus, ProposalStatus, ProposalType, VoteType,
     RiskPoolStatus, ClaimEvidence, VoteRecord, OracleConfig, RiskMetrics,
@@ -158,3 +160,6 @@ pub use versioning::{
     MigrationState, migration_state_to_u32, u32_to_migration_state,
 };
 pub use upgradeable::UpgradeableContract;
+
+// Re-export the unified error conversion macro
+pub use unified_errors::to_unified_error;

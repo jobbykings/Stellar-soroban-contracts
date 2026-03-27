@@ -2,18 +2,18 @@
   "version": "1.0.0",
   "generated_at": "2026-03-25T12:28:00Z",
   "contracts": [
-    "automated_claims",
-    "risk_assessment",
     "tokenized_insurance",
-    "error_handling",
-    "shared",
     "contracts",
-    "governance",
-    "policy",
-    "risk_pool",
     "src",
+    "error_handling",
+    "claims",
+    "shared",
+    "risk_assessment",
+    "governance",
+    "risk_pool",
+    "policy",
     "cross_chain_bridge",
-    "claims"
+    "automated_claims"
   ],
   "error_ranges": [
     {
@@ -420,6 +420,22 @@
         "contract": "shared",
         "severity": "high",
         "recovery_action": "Ensure the resource exists before attempting to access it"
+      },
+      "shared.InsufficientPermissions": {
+        "name": "InsufficientPermissions",
+        "code": 5,
+        "description": "",
+        "contract": "shared",
+        "severity": "high",
+        "recovery_action": "Add more funds/liquidity or reduce operation amount"
+      },
+      "shared.AccessDenied": {
+        "name": "AccessDenied",
+        "code": 6,
+        "description": "",
+        "contract": "shared",
+        "severity": "high",
+        "recovery_action": "Review error details and consult documentation"
       },
       "shared.UnauthorizedUpgrade": {
         "name": "UnauthorizedUpgrade",
@@ -855,10 +871,10 @@
         "severity": "low",
         "recovery_action": "Validate input parameters and retry with correct values"
       },
-      "shared.InvalidState": {
-        "name": "InvalidState",
-        "code": 7,
-        "description": "Arithmetic overflow occurred",
+      "shared.InvalidAmount": {
+        "name": "InvalidAmount",
+        "code": 101,
+        "description": "",
         "contract": "shared",
         "severity": "low",
         "recovery_action": "Validate input parameters and retry with correct values"
@@ -867,6 +883,94 @@
         "name": "InvalidAddress",
         "code": 14,
         "description": "Operation would cause underflow",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Validate input parameters and retry with correct values"
+      },
+      "shared.InvalidSignature": {
+        "name": "InvalidSignature",
+        "code": 103,
+        "description": "",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Validate input parameters and retry with correct values"
+      },
+      "shared.InvalidTimestamp": {
+        "name": "InvalidTimestamp",
+        "code": 104,
+        "description": "",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Validate input parameters and retry with correct values"
+      },
+      "shared.InvalidFormat": {
+        "name": "InvalidFormat",
+        "code": 105,
+        "description": "",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Validate input parameters and retry with correct values"
+      },
+      "shared.InvalidState": {
+        "name": "InvalidState",
+        "code": 7,
+        "description": "Arithmetic overflow occurred",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Validate input parameters and retry with correct values"
+      },
+      "shared.InvalidCalculation": {
+        "name": "InvalidCalculation",
+        "code": 303,
+        "description": "",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Validate input parameters and retry with correct values"
+      },
+      "shared.InvalidContract": {
+        "name": "InvalidContract",
+        "code": 801,
+        "description": "",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Validate input parameters and retry with correct values"
+      },
+      "shared.EvidenceInvalid": {
+        "name": "EvidenceInvalid",
+        "code": 1002,
+        "description": "",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Validate input parameters and retry with correct values"
+      },
+      "shared.InvalidPriceData": {
+        "name": "InvalidPriceData",
+        "code": 1401,
+        "description": "",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Validate input parameters and retry with correct values"
+      },
+      "shared.OracleSignatureInvalid": {
+        "name": "OracleSignatureInvalid",
+        "code": 1402,
+        "description": "",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Validate input parameters and retry with correct values"
+      },
+      "shared.InvalidAsset": {
+        "name": "InvalidAsset",
+        "code": 1502,
+        "description": "",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Validate input parameters and retry with correct values"
+      },
+      "shared.AlertConfigInvalid": {
+        "name": "AlertConfigInvalid",
+        "code": 1701,
+        "description": "",
         "contract": "shared",
         "severity": "low",
         "recovery_action": "Validate input parameters and retry with correct values"
@@ -1713,22 +1817,6 @@
         "severity": "medium",
         "recovery_action": "Ensure the resource exists before attempting to access it"
       },
-      "shared.NotFound": {
-        "name": "NotFound",
-        "code": 5,
-        "description": "Resource already exists",
-        "contract": "shared",
-        "severity": "medium",
-        "recovery_action": "Ensure the resource exists before attempting to access it"
-      },
-      "shared.AlreadyExists": {
-        "name": "AlreadyExists",
-        "code": 6,
-        "description": "Invalid state for operation",
-        "contract": "shared",
-        "severity": "medium",
-        "recovery_action": "Check if the operation was already completed"
-      },
       "shared.NotInitialized": {
         "name": "NotInitialized",
         "code": 1,
@@ -1745,13 +1833,53 @@
         "severity": "medium",
         "recovery_action": "Check if the operation was already completed"
       },
-      "shared.PolicyNotFound": {
-        "name": "PolicyNotFound",
-        "code": 20,
-        "description": "Invalid policy state for operation",
+      "shared.NotFound": {
+        "name": "NotFound",
+        "code": 5,
+        "description": "Resource already exists",
         "contract": "shared",
         "severity": "medium",
         "recovery_action": "Ensure the resource exists before attempting to access it"
+      },
+      "shared.AlreadyExists": {
+        "name": "AlreadyExists",
+        "code": 6,
+        "description": "Invalid state for operation",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Check if the operation was already completed"
+      },
+      "shared.StateTransition": {
+        "name": "StateTransition",
+        "code": 205,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.CheckpointNotFound": {
+        "name": "CheckpointNotFound",
+        "code": 600,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Ensure the resource exists before attempting to access it"
+      },
+      "shared.ProposalNotFound": {
+        "name": "ProposalNotFound",
+        "code": 85,
+        "description": "Invalid proposal type",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Ensure the resource exists before attempting to access it"
+      },
+      "shared.AlreadyVoted": {
+        "name": "AlreadyVoted",
+        "code": 81,
+        "description": "Proposal not active",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Check if the operation was already completed"
       },
       "shared.ClaimNotFound": {
         "name": "ClaimNotFound",
@@ -1760,6 +1888,46 @@
         "contract": "shared",
         "severity": "medium",
         "recovery_action": "Ensure the resource exists before attempting to access it"
+      },
+      "shared.ClaimAlreadyProcessed": {
+        "name": "ClaimAlreadyProcessed",
+        "code": 1001,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Check if the operation was already completed"
+      },
+      "shared.PolicyNotFound": {
+        "name": "PolicyNotFound",
+        "code": 20,
+        "description": "Invalid policy state for operation",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Ensure the resource exists before attempting to access it"
+      },
+      "shared.ProviderNotFound": {
+        "name": "ProviderNotFound",
+        "code": 1201,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Ensure the resource exists before attempting to access it"
+      },
+      "shared.AssetNotFound": {
+        "name": "AssetNotFound",
+        "code": 1500,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Ensure the resource exists before attempting to access it"
+      },
+      "shared.AssetAlreadyRegistered": {
+        "name": "AssetAlreadyRegistered",
+        "code": 1501,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Check if the operation was already completed"
       },
       "shared.EvidenceAlreadyExists": {
         "name": "EvidenceAlreadyExists",
@@ -1773,22 +1941,6 @@
         "name": "EvidenceNotFound",
         "code": 48,
         "description": "Invalid evidence hash (e.g. all-zero placeholder)",
-        "contract": "shared",
-        "severity": "medium",
-        "recovery_action": "Ensure the resource exists before attempting to access it"
-      },
-      "shared.AlreadyVoted": {
-        "name": "AlreadyVoted",
-        "code": 81,
-        "description": "Proposal not active",
-        "contract": "shared",
-        "severity": "medium",
-        "recovery_action": "Check if the operation was already completed"
-      },
-      "shared.ProposalNotFound": {
-        "name": "ProposalNotFound",
-        "code": 85,
-        "description": "Invalid proposal type",
         "contract": "shared",
         "severity": "medium",
         "recovery_action": "Ensure the resource exists before attempting to access it"
@@ -2108,6 +2260,30 @@
         "contract": "error_handling",
         "severity": "medium",
         "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.StorageError": {
+        "name": "StorageError",
+        "code": 400,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.DataCorrupted": {
+        "name": "DataCorrupted",
+        "code": 401,
+        "description": "",
+        "contract": "shared",
+        "severity": "high",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.InsufficientStorage": {
+        "name": "InsufficientStorage",
+        "code": 402,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Add more funds/liquidity or reduce operation amount"
       },
       "shared.OracleDataStale": {
         "name": "OracleDataStale",
@@ -2487,9 +2663,41 @@
         "severity": "medium",
         "recovery_action": "Review error details and consult documentation"
       },
+      "shared.MissingRequiredField": {
+        "name": "MissingRequiredField",
+        "code": 106,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.OutOfBounds": {
+        "name": "OutOfBounds",
+        "code": 107,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
       "shared.DivisionByZero": {
         "name": "DivisionByZero",
         "code": 16,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.WorkflowError": {
+        "name": "WorkflowError",
+        "code": 501,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.ConditionNotMet": {
+        "name": "ConditionNotMet",
+        "code": 502,
         "description": "",
         "contract": "shared",
         "severity": "medium",
@@ -2921,6 +3129,38 @@
         "severity": "high",
         "recovery_action": "Verify system state and contact administrators if needed"
       },
+      "shared.RollbackDetected": {
+        "name": "RollbackDetected",
+        "code": 601,
+        "description": "",
+        "contract": "shared",
+        "severity": "critical",
+        "recovery_action": "Verify system state and contact administrators if needed"
+      },
+      "shared.DoubleApplication": {
+        "name": "DoubleApplication",
+        "code": 602,
+        "description": "",
+        "contract": "shared",
+        "severity": "high",
+        "recovery_action": "Verify system state and contact administrators if needed"
+      },
+      "shared.CheckpointCorrupted": {
+        "name": "CheckpointCorrupted",
+        "code": 603,
+        "description": "",
+        "contract": "shared",
+        "severity": "high",
+        "recovery_action": "Verify system state and contact administrators if needed"
+      },
+      "shared.AuditRecordCorrupted": {
+        "name": "AuditRecordCorrupted",
+        "code": 1601,
+        "description": "",
+        "contract": "shared",
+        "severity": "high",
+        "recovery_action": "Verify system state and contact administrators if needed"
+      },
       "shared.RollbackFailed": {
         "name": "RollbackFailed",
         "code": 9,
@@ -3019,6 +3259,14 @@
         "severity": "high",
         "recovery_action": "Wait for contract to be unpaused or contact admin"
       },
+      "shared.EmergencyMode": {
+        "name": "EmergencyMode",
+        "code": 700,
+        "description": "",
+        "contract": "shared",
+        "severity": "critical",
+        "recovery_action": "Review error details and consult documentation"
+      },
       "shared.Paused": {
         "name": "Paused",
         "code": 2,
@@ -3026,6 +3274,22 @@
         "contract": "shared",
         "severity": "high",
         "recovery_action": "Wait for contract to be unpaused or contact admin"
+      },
+      "shared.Halted": {
+        "name": "Halted",
+        "code": 702,
+        "description": "",
+        "contract": "shared",
+        "severity": "high",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.CriticalError": {
+        "name": "CriticalError",
+        "code": 703,
+        "description": "",
+        "contract": "shared",
+        "severity": "critical",
+        "recovery_action": "Review error details and consult documentation"
       },
       "shared.FunctionPaused": {
         "name": "FunctionPaused",
@@ -3149,6 +3413,22 @@
         "severity": "medium",
         "recovery_action": "Review error details and consult documentation"
       },
+      "shared.ContractCallFailed": {
+        "name": "ContractCallFailed",
+        "code": 800,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.ContractNotResponding": {
+        "name": "ContractNotResponding",
+        "code": 802,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
       "shared.SlashingContractNotSet": {
         "name": "SlashingContractNotSet",
         "code": 87,
@@ -3207,18 +3487,18 @@
         "severity": "medium",
         "recovery_action": "Review error details and consult documentation"
       },
-      "shared.ProposalNotActive": {
-        "name": "ProposalNotActive",
-        "code": 82,
-        "description": "Quorum not met",
-        "contract": "shared",
-        "severity": "medium",
-        "recovery_action": "Review error details and consult documentation"
-      },
       "shared.QuorumNotMet": {
         "name": "QuorumNotMet",
         "code": 83,
         "description": "Threshold not met",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.ProposalNotActive": {
+        "name": "ProposalNotActive",
+        "code": 82,
+        "description": "Quorum not met",
         "contract": "shared",
         "severity": "medium",
         "recovery_action": "Review error details and consult documentation"
@@ -3286,6 +3566,14 @@
         "code": 205,
         "description": "",
         "contract": "error_handling",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.ClaimExpired": {
+        "name": "ClaimExpired",
+        "code": 1003,
+        "description": "",
+        "contract": "shared",
         "severity": "medium",
         "recovery_action": "Review error details and consult documentation"
       },
@@ -3400,6 +3688,30 @@
         "code": 302,
         "description": "Requested refund amount exceeds what was paid",
         "contract": "error_handling",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.PolicyExpired": {
+        "name": "PolicyExpired",
+        "code": 1101,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.CoverageInsufficient": {
+        "name": "CoverageInsufficient",
+        "code": 1102,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Add more funds/liquidity or reduce operation amount"
+      },
+      "shared.PremiumNotPaid": {
+        "name": "PremiumNotPaid",
+        "code": 1103,
+        "description": "",
+        "contract": "shared",
         "severity": "medium",
         "recovery_action": "Review error details and consult documentation"
       },
@@ -3557,6 +3869,38 @@
         "severity": "medium",
         "recovery_action": "Add more funds/liquidity or reduce operation amount"
       },
+      "shared.InsufficientLiquidity": {
+        "name": "InsufficientLiquidity",
+        "code": 1200,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Add more funds/liquidity or reduce operation amount"
+      },
+      "shared.InsufficientStake": {
+        "name": "InsufficientStake",
+        "code": 1202,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Add more funds/liquidity or reduce operation amount"
+      },
+      "shared.LiquidityViolation": {
+        "name": "LiquidityViolation",
+        "code": 1203,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.StakeInsufficient": {
+        "name": "StakeInsufficient",
+        "code": 1302,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Add more funds/liquidity or reduce operation amount"
+      },
       "shared.InsufficientFunds": {
         "name": "InsufficientFunds",
         "code": 4,
@@ -3687,6 +4031,22 @@
         "severity": "medium",
         "recovery_action": "Review error details and consult documentation"
       },
+      "shared.SlashConditionNotMet": {
+        "name": "SlashConditionNotMet",
+        "code": 1300,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.SlashingFailed": {
+        "name": "SlashingFailed",
+        "code": 1301,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
       "shared.SlashingExecutionFailed": {
         "name": "SlashingExecutionFailed",
         "code": 88,
@@ -3750,6 +4110,22 @@
         "code": 15,
         "description": "",
         "contract": "claims",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.OracleUnavailable": {
+        "name": "OracleUnavailable",
+        "code": 1400,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.PriceStale": {
+        "name": "PriceStale",
+        "code": 1403,
+        "description": "",
+        "contract": "shared",
         "severity": "medium",
         "recovery_action": "Review error details and consult documentation"
       },
@@ -3860,8 +4236,33 @@
         "recovery_action": "Review error details and consult documentation"
       }
     },
-    "audit_trail": {},
+    "audit_trail": {
+      "shared.BusinessLogicError": {
+        "name": "BusinessLogicError",
+        "code": 500,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.AuditLogFailed": {
+        "name": "AuditLogFailed",
+        "code": 1600,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      }
+    },
     "alerting": {
+      "shared.AlertFailed": {
+        "name": "AlertFailed",
+        "code": 1700,
+        "description": "",
+        "contract": "shared",
+        "severity": "medium",
+        "recovery_action": "Review error details and consult documentation"
+      },
       "src.NotificationFailed": {
         "name": "NotificationFailed",
         "code": 10,
@@ -3871,6 +4272,23 @@
         "recovery_action": "Review error details and consult documentation"
       }
     },
-    "monitoring": {}
+    "monitoring": {
+      "shared.MonitoringError": {
+        "name": "MonitoringError",
+        "code": 1800,
+        "description": "",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Review error details and consult documentation"
+      },
+      "shared.MetricCollectionFailed": {
+        "name": "MetricCollectionFailed",
+        "code": 1801,
+        "description": "",
+        "contract": "shared",
+        "severity": "low",
+        "recovery_action": "Review error details and consult documentation"
+      }
+    }
   }
 }

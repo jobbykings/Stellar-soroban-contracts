@@ -6,6 +6,7 @@ use insurance_contracts::authorization::{
     get_role, initialize_admin, register_trusted_contract, require_admin,
     require_risk_pool_management, require_trusted_contract, Role,
 };
+use insurance_contracts::unified_errors::{UnifiedError, to_unified_error};
 
 // Import invariant checks and error types
 use insurance_invariants::{InvariantError, ProtocolInvariants};
@@ -78,6 +79,12 @@ impl From<InvariantError> for ContractError {
             InvariantError::Overflow => ContractError::Overflow,
             _ => ContractError::InvalidState,
         }
+    }
+}
+
+impl From<ContractError> for UnifiedError {
+    fn from(err: ContractError) -> Self {
+        to_unified_error!(err)
     }
 }
 
@@ -439,14 +446,14 @@ impl RiskPoolContract {
             return Err(ContractError::InvalidInput);
         }
 
-        // Create checkpoint before state change
+        // Create enhanced checkpoint before state change
         let mut context = soroban_sdk::Vec::new(&env);
         context.push_back(Symbol::new(&env, "provider"));
         context.push_back(Symbol::new(&env, &format!("{:?}", provider)));
         context.push_back(Symbol::new(&env, "amount"));
         context.push_back(Symbol::new(&env, &format!("{}", amount)));
         
-        let checkpoint_id = create_checkpoint(
+        let checkpoint_id = create_enhanced_checkpoint(
             &env,
             Symbol::new(&env, "deposit_liquidity"),
             context,
@@ -540,14 +547,14 @@ impl RiskPoolContract {
             return Err(ContractError::InsufficientFunds);
         }
 
-        // Create checkpoint before state change
+        // Create enhanced checkpoint before state change
         let mut context = soroban_sdk::Vec::new(&env);
         context.push_back(Symbol::new(&env, "claim_id"));
         context.push_back(Symbol::new(&env, &format!("{}", claim_id)));
         context.push_back(Symbol::new(&env, "amount"));
         context.push_back(Symbol::new(&env, &format!("{}", amount)));
         
-        let checkpoint_id = create_checkpoint(
+        let checkpoint_id = create_enhanced_checkpoint(
             &env,
             Symbol::new(&env, "reserve_liquidity"),
             context,
@@ -873,6 +880,153 @@ pub fn payout_claim(
     // CHECKPOINTING AND ROLLBACK DETECTION METHODS
     // ============================================================
 
+    /// Enhanced checkpoint creation with comprehensive metrics snapshot
+    fn create_enhanced_checkpoint(
+        env: &Env,
+        operation_type: Symbol,
+        context: soroban_sdk::Vec<Symbol>,
+    ) -> Result<u64, ContractError> {
+        // Get current pool statistics
+        let stats: (i128, i128, i128, u64) =
+            env.storage().persistent().get(&POOL_STATS).ok_or(ContractError::NotInitialized)?;
+        
+        let reserved_total: i128 = env.storage().persistent().get(&RESERVED_TOTAL).unwrap_or(0i128);
+        
+        // Get next checkpoint ID
+        let checkpoint_id = get_next_checkpoint_id(env);
+        
+        // Create comprehensive checkpoint data
+        let checkpoint = PoolCheckpoint {
+            checkpoint_id,
+            ledger_sequence: env.ledger().sequence(),
+            timestamp: env.ledger().timestamp(),
+            pool_stats: stats,
+            reserved_total,
+            data_hash: BytesN::from_array(&env, &[0; 32]), // Will be set below
+            operation_type,
+            context,
+        };
+        
+        // Calculate hash of checkpoint data
+        let data_hash = calculate_checkpoint_hash(env, &checkpoint);
+        let mut checkpoint_with_hash = checkpoint;
+        checkpoint_with_hash.data_hash = data_hash;
+        
+        // Store checkpoint
+        env.storage().persistent().set(&(CHECKPOINT_DATA, checkpoint_id), &checkpoint_with_hash);
+        
+        // Perform post-mortem verification against previous checkpoint
+        if checkpoint_id > 1 {
+            verify_state_consistency(env, checkpoint_id)?;
+        }
+        
+        // Emit checkpoint creation event
+        env.events().publish(
+            (Symbol::new(env, "enhanced_checkpoint_created"), checkpoint_id),
+            (operation_type, data_hash, stats.0, reserved_total),
+        );
+        
+        Ok(checkpoint_id)
+    }
+
+    /// Verify state consistency between checkpoints to detect rollbacks
+    fn verify_state_consistency(env: &Env, current_checkpoint_id: u64) -> Result<(), ContractError> {
+        let current_checkpoint: PoolCheckpoint = env
+            .storage()
+            .persistent()
+            .get(&(CHECKPOINT_DATA, current_checkpoint_id))
+            .ok_or(ContractError::CheckpointNotFound)?;
+        
+        let previous_checkpoint_id = current_checkpoint_id - 1;
+        let previous_checkpoint: PoolCheckpoint = env
+            .storage()
+            .persistent()
+            .get(&(CHECKPOINT_DATA, previous_checkpoint_id))
+            .ok_or(ContractError::CheckpointNotFound)?;
+        
+        // Check for state inconsistencies that indicate rollback
+        let current_total = current_checkpoint.pool_stats.0;
+        let previous_total = previous_checkpoint.pool_stats.0;
+        let current_reserved = current_checkpoint.reserved_total;
+        let previous_reserved = previous_checkpoint.reserved_total;
+        
+        // Detect potential rollback scenarios
+        if current_checkpoint.ledger_sequence <= previous_checkpoint.ledger_sequence {
+            emit_emergency_alert(
+                env,
+                current_checkpoint_id,
+                Symbol::new(env, "sequence_rollback"),
+                "Ledger sequence decreased between checkpoints",
+            );
+            return Err(ContractError::RollbackDetected);
+        }
+        
+        // Check for inconsistent total liquidity changes
+        if current_total < previous_total {
+            // Verify if this was a legitimate payout operation
+            let paid_out_diff = current_checkpoint.pool_stats.1 - previous_checkpoint.pool_stats.1;
+            let expected_total = previous_total - paid_out_diff;
+            
+            if current_total != expected_total {
+                emit_emergency_alert(
+                    env,
+                    current_checkpoint_id,
+                    Symbol::new(env, "liquidity_inconsistency"),
+                    "Total liquidity inconsistency detected",
+                );
+                return Err(ContractError::RollbackDetected);
+            }
+        }
+        
+        // Check for reserved amount inconsistencies
+        if current_reserved > current_total {
+            emit_emergency_alert(
+                env,
+                current_checkpoint_id,
+                Symbol::new(env, "reserved_exceeds_total"),
+                "Reserved amount exceeds total liquidity",
+            );
+            return Err(ContractError::LiquidityViolation);
+        }
+        
+        Ok(())
+    }
+
+    /// Emit emergency alert events for critical issues
+    fn emit_emergency_alert(
+        env: &Env,
+        checkpoint_id: u64,
+        alert_type: Symbol,
+        message: &str,
+    ) {
+        let alert_event = RollbackDetectionEvent {
+            checkpoint_id,
+            expected_hash: BytesN::from_array(&env, &[0; 32]),
+            actual_hash: BytesN::from_array(&env, &[0; 32]),
+            inconsistency_type: alert_type,
+            detection_sequence: env.ledger().sequence(),
+            emergency_flag: true,
+        };
+        
+        // Emit emergency alert event
+        env.events().publish(
+            (Symbol::new(env, "emergency_alert"), checkpoint_id),
+            (alert_type, message, env.ledger().sequence()),
+        );
+        
+        // Store the alert event for audit trail
+        env.storage().persistent().set(
+            &(ROLLBACK_DETECTION, checkpoint_id),
+            &alert_event,
+        );
+        
+        // Additional critical alert for monitoring systems
+        env.events().publish(
+            (Symbol::new(env, "critical_system_alert"), alert_type),
+            (checkpoint_id, message),
+        );
+    }
+
     /// Get checkpoint by ID (for audit and verification)
     pub fn get_checkpoint(env: Env, checkpoint_id: u64) -> Result<PoolCheckpoint, ContractError> {
         get_checkpoint(&env, checkpoint_id)
@@ -913,8 +1067,8 @@ pub fn payout_claim(
         Ok(events)
     }
 
-    /// Force create manual checkpoint (admin only)
-    pub fn create_manual_checkpoint(
+    /// Force create manual enhanced checkpoint (admin only)
+    pub fn create_manual_enhanced_checkpoint(
         env: Env,
         admin: Address,
         operation_type: Symbol,
@@ -923,7 +1077,7 @@ pub fn payout_claim(
         admin.require_auth();
         require_admin(&env, &admin)?;
         
-        create_checkpoint(&env, operation_type, context)
+        create_enhanced_checkpoint(&env, operation_type, context)
     }
 
     /// Get checkpoint statistics
